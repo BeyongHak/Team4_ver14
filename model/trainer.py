@@ -93,16 +93,15 @@ class Trainer:
 
     def _calculate_mono_loss(self, states):
         """
-        Calculate Diagonal Monotonicity Loss for ALL states along the path.
-        Vectorized Implementation (No Loop).
+        Calculate Diagonal Monotonicity Loss for IMMEDIATE neighbors only (Step +/- 1).
         
         Path:
-        - Lower: All integer steps d down from S_curr until base state (at least one 0).
-        - Upper: All integer steps d up from S_curr until final state (at least one Max K).
+        - Lower: S_curr - 1 (All retailers -1)
+        - Upper: S_curr + 1 (All retailers +1)
         
         Constraints:
-        - Lower Path: Action(S_lower_d) <= Action(S_curr). Loss if >. Gradient on S_curr.
-        - Upper Path: Action(S_curr) <= Action(S_upper_d). Loss if >. Gradient on S_upper_d.
+        - Lower Path: Action(S_lower) <= Action(S_curr). Loss if >. Gradient on S_curr.
+        - Upper Path: Action(S_curr) <= Action(S_upper). Loss if >. Gradient on S_upper.
         """
         batch_size = states.shape[0]
         device = states.device
@@ -111,150 +110,91 @@ class Trainer:
         inv_input = states[:, :self.model.inv_dim] # (B, Inv)
         ret_input = states[:, self.model.inv_dim:] # (B, N)
         
-        # Max K Tensor
         max_k_tensor = self.model.retailer_max_k_tensor.to(device) # (N,)
         
         # Current Integer State
         k_int = torch.round(ret_input * max_k_tensor) # (B, N)
         
-        # 2. Determine Maximum Steps needed for the Batch
-        # We need the max possible steps any state in the batch can take.
+        # 2. Define Valid Neighbors (Step = 1)
         
-        # Lower: Max steps down = min(k_int) across retailers
-        max_steps_down_per_sample = k_int.min(dim=1).values # (B,)
-        global_max_down = int(max_steps_down_per_sample.max().item())
+        # Lower Valid: All k_i >= 1
+        # min(k_int) >= 1
+        valid_lower = (k_int.min(dim=1).values >= 1.0) # (B,)
         
-        # Upper: Max steps up = min(Max K - k_int) across retailers
+        # Upper Valid: All k_i < Max K_i
+        # We check dist_to_max >= 1
         dist_to_max = max_k_tensor - k_int
-        max_steps_up_per_sample = dist_to_max.min(dim=1).values # (B,)
-        global_max_up = int(max_steps_up_per_sample.max().item())
+        valid_upper = (dist_to_max.min(dim=1).values >= 1.0) # (B,)
         
-        # 3. Create Step Grid (Broadcasting)
-        # We create a range [1, 2, ..., Max_Step]
+        # 3. Create Neighbor States
+        # Step size in normalized space = 1.0 / MaxK
+        delta = 1.0 / max_k_tensor # (N,) 
         
-        # --- Lower Path Expansion ---
         loss_lower = torch.tensor(0.0, device=device)
-        
-        if global_max_down > 0:
-            # Range: (1, Global_Max_Down)
-            steps_range = torch.arange(1, global_max_down + 1, device=device).float() # (M,)
-            # Expand to (B, M)
-            steps_grid = steps_range.unsqueeze(0).expand(batch_size, -1) # (B, M)
-            
-            # Mask: Is step d valid for sample b? (d <= max_steps_down_b)
-            mask_lower = (steps_grid <= max_steps_down_per_sample.unsqueeze(1)) # (B, M)
-            
-            if mask_lower.any():
-                # Prepare Inputs
-                # S_lower = S_curr - d
-                # Reshape Ret: (B, 1, N)
-                # Reshape Steps: (B, M, 1)
-                # Max K: (1, 1, N)
-                
-                ret_expanded = ret_input.unsqueeze(1) # (B, 1, N)
-                inv_expanded = inv_input.unsqueeze(1).expand(-1, global_max_down, -1) # (B, M, Inv) (Duplicate Inv)
-                
-                delta = steps_grid.unsqueeze(2) / max_k_tensor.view(1, 1, -1) # (B, M, N)
-                
-                ret_lower_grid = ret_expanded - delta
-                ret_lower_grid = torch.clamp(ret_lower_grid, min=0.0)
-                
-                # Merge to State: (B, M, Inv+Ret) -> Flatten to (B*M, State)
-                # We process all B*M states at once
-                
-                flat_inv = inv_expanded.reshape(-1, self.model.inv_dim)
-                flat_ret = ret_lower_grid.reshape(-1, self.model.ret_dim)
-                flat_states_lower = torch.cat([flat_inv, flat_ret], dim=1)
-                
-                # Get Actions
-                # Action(Lower) - No Grad
-                with torch.no_grad():
-                    # Helper logic inline to avoid overhead
-                    saa_lower = self.model.get_saa_base_action(flat_states_lower)
-                    (mean_lower, _), _ = self.model(flat_states_lower)
-                    act_lower = F.relu(saa_lower - mean_lower)
-                    act_lower = act_lower.view(batch_size, global_max_down, -1) # (B, M, 1)
-                    
-                # Action(Curr) - With Grad (But repeated M times for comparison)
-                # We need Grad flow to S_curr
-                # Re-compute S_curr Action to attach graph or use expanded
-                # Better to compute once and expand
-                saa_curr = self.model.get_saa_base_action(states)
-                (mean_curr, _), _ = self.model(states)
-                act_curr = F.relu(saa_curr - mean_curr) # (B, 1)
-                
-                act_curr_expanded = act_curr.unsqueeze(1).expand(-1, global_max_down, -1) # (B, M, 1)
-                
-                # Loss Calculation
-                # Constraint: Action(Lower) <= Action(Curr)
-                # Violation: Action(Lower) > Action(Curr)
-                # Grad: Increase Action(Curr)
-                
-                diff_lower = act_lower - act_curr_expanded
-                loss_grid = F.relu(diff_lower) # (B, M, 1) [Mod] L1 Penalty (Linear)
-                
-                # Apply Mask
-                loss_grid = loss_grid * mask_lower.unsqueeze(2).float()
-                
-                # Mean over valid entries
-                # [Mod] Batch Mean: Sum over steps / Batch Size
-                # We want to punish MORE if there are MORE violations along the path.
-                # So we do NOT divide by valid_count (steps), but by batch_size.
-                
-                loss_lower = loss_grid.sum() / batch_size
-        
-        # --- Upper Path Expansion ---
         loss_upper = torch.tensor(0.0, device=device)
         
-        if global_max_up > 0:
-            steps_range = torch.arange(1, global_max_up + 1, device=device).float()
-            steps_grid = steps_range.unsqueeze(0).expand(batch_size, -1)
+        # --- Lower Check (S_prev vs S_curr) ---
+        if valid_lower.any():
+            # Create S_prev
+            ret_lower = ret_input - delta
+            ret_lower = torch.clamp(ret_lower, min=0.0)
             
-            mask_upper = (steps_grid <= max_steps_up_per_sample.unsqueeze(1))
+            # Filter only valid samples
+            ret_lower_valid = ret_lower[valid_lower]
+            inv_lower_valid = inv_input[valid_lower]
             
-            if mask_upper.any():
-                ret_expanded = ret_input.unsqueeze(1) # (B, 1, N)
-                inv_expanded = inv_input.unsqueeze(1).expand(-1, global_max_up, -1)
+            states_lower = torch.cat([inv_lower_valid, ret_lower_valid], dim=1)
+            
+            # Action(Lower) - No Grad (Anchor)
+            with torch.no_grad():
+                saa_lower = self.model.get_saa_base_action(states_lower)
+                (mean_lower, _), _ = self.model(states_lower)
+                act_lower = F.relu(saa_lower - mean_lower)
+            
+            # Action(Curr) - With Grad (Target to change)
+            states_curr_valid = states[valid_lower]
+            saa_curr = self.model.get_saa_base_action(states_curr_valid)
+            (mean_curr, _), _ = self.model(states_curr_valid)
+            act_curr = F.relu(saa_curr - mean_curr) 
+            
+            # Constraint: Lower <= Curr
+            # Violation: Lower > Curr
+            # Loss = ReLU(Lower - Curr)
+            diff_lower = act_lower - act_curr
+            loss_vec = F.relu(diff_lower)
+            
+            # Normalize by Batch Size (not valid count) for stability
+            loss_lower = loss_vec.sum() / batch_size
+            
+        # --- Upper Check (S_curr vs S_next) ---
+        if valid_upper.any():
+            # Create S_next
+            ret_upper = ret_input + delta
+            
+            ret_upper_valid = ret_upper[valid_upper]
+            inv_upper_valid = inv_input[valid_upper]
+            
+            states_upper = torch.cat([inv_upper_valid, ret_upper_valid], dim=1)
+            
+            # Action(Curr) - No Grad (Anchor)
+            states_curr_valid = states[valid_upper]
+            with torch.no_grad():
+                saa_curr = self.model.get_saa_base_action(states_curr_valid)
+                (mean_curr, _), _ = self.model(states_curr_valid)
+                act_curr = F.relu(saa_curr - mean_curr)
                 
-                delta = steps_grid.unsqueeze(2) / max_k_tensor.view(1, 1, -1)
-                
-                ret_upper_grid = ret_expanded + delta
-                # Soft upper limit; model should handle >1.0 inputs if scaling allows, 
-                # but let's assume valid range is handled by NN.
-                
-                flat_inv = inv_expanded.reshape(-1, self.model.inv_dim)
-                flat_ret = ret_upper_grid.reshape(-1, self.model.ret_dim)
-                flat_states_upper = torch.cat([flat_inv, flat_ret], dim=1)
-                
-                # Get Actions
-                # Action(Upper) - With Grad (We want to change Upper)
-                # Action(Curr) - No Grad (Anchor)
-                
-                # Re-compute Upper Actions (Batch * M)
-                saa_upper = self.model.get_saa_base_action(flat_states_upper)
-                (mean_upper, _), _ = self.model(flat_states_upper)
-                act_upper = F.relu(saa_upper - mean_upper)
-                act_upper = act_upper.view(batch_size, global_max_up, -1)
-                
-                # Current Action (No Grad)
-                with torch.no_grad():
-                    saa_curr = self.model.get_saa_base_action(states)
-                    (mean_curr, _), _ = self.model(states)
-                    act_curr = F.relu(saa_curr - mean_curr) 
-                    
-                act_curr_expanded = act_curr.unsqueeze(1).expand(-1, global_max_up, -1)
-                
-                # Loss Calculation
-                # Constraint: Action(Curr) <= Action(Upper)
-                # Violation: Action(Curr) > Action(Upper)
-                # Grad: Increase Action(Upper)
-                
-                diff_upper = act_curr_expanded - act_upper
-                loss_grid = F.relu(diff_upper) # [Mod] L1 Penalty (Linear)
-                
-                loss_grid = loss_grid * mask_upper.unsqueeze(2).float()
-                
-                loss_upper = loss_grid.sum() / batch_size
+            # Action(Upper) - With Grad (Target to change/pull up)
+            saa_upper = self.model.get_saa_base_action(states_upper)
+            (mean_upper, _), _ = self.model(states_upper)
+            act_upper = F.relu(saa_upper - mean_upper)
+            
+            # Constraint: Curr <= Upper
+            # Violation: Curr > Upper
+            # Loss = ReLU(Curr - Upper)
+            diff_upper = act_curr - act_upper
+            loss_vec = F.relu(diff_upper)
+            
+            loss_upper = loss_vec.sum() / batch_size
 
         return loss_lower, loss_upper
 

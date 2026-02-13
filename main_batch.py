@@ -10,7 +10,7 @@ import argparse
 # Global Settings
 # ==============================================================================
 MAX_UPDATES = 500000   # Reduced to 500K
-EVAL_INTERVAL = 5000   # Evaluates every 5000 updates (Total ~100 evals)
+EVAL_INTERVAL = 1000   # Evaluates every 5000 updates (Total ~100 evals)
 PYTHON_EXE = sys.executable
 
 def get_scenario_name(config_filename):
