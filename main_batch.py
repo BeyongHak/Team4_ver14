@@ -9,7 +9,7 @@ import argparse
 # ==============================================================================
 # Global Settings
 # ==============================================================================
-MAX_UPDATES = 500000   # Reduced to 500K
+MAX_UPDATES = 2000   # Reduced to 500K
 EVAL_INTERVAL = 1000   # Evaluates every 5000 updates (Total ~100 evals)
 PYTHON_EXE = sys.executable
 
