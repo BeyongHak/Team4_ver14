@@ -159,3 +159,69 @@ class SubprocVecEnv:
 
     def __del__(self):
         self.close()
+
+class DummyVecEnv:
+    """
+    VecEnv that runs multiple environments sequentially in the same process.
+    Useful for evaluation or debugging to avoid multiprocessing overhead.
+    """
+    def __init__(self, env_fns):
+        self.envs = [fn() for fn in env_fns]
+        self.num_envs = len(env_fns)
+        
+        # Get properties
+        # Assuming all envs are same
+        self.state_size = self.envs[0].state_size
+        self.action_size = self.envs[0].action_size
+        
+    def step_async(self, actions):
+        self.actions = actions
+        
+    def step_wait(self):
+        results = []
+        for env, action in zip(self.envs, self.actions):
+            next_state, reward, done, info = env.step(action)
+            if done:
+                # Auto-reset if done
+                next_state = env.reset()
+            results.append((next_state, reward, done, info))
+            
+        obs, rews, dones, infos = zip(*results)
+        return np.stack(obs), np.stack(rews), np.stack(dones), infos
+    
+    def step(self, actions):
+        self.step_async(actions)
+        return self.step_wait()
+    
+    def reset(self):
+        obs = [env.reset() for env in self.envs]
+        return np.stack(obs)
+        
+    def close(self):
+        for env in self.envs:
+            if hasattr(env, 'close'):
+                env.close()
+
+    def getStateSize(self):
+        return self.state_size
+    
+    def getActionSize(self):
+        return self.action_size
+    
+    def getValidActions(self, state=None):
+        mask = np.ones((self.num_envs, self.action_size), dtype=np.float32)
+        return mask
+        
+    def get_attr(self, attr_name):
+        return [getattr(env, attr_name) for env in self.envs]
+    
+    def call_method_batch(self, method_name, args_list):
+        """
+        Call a method on each environment with different arguments.
+        args_list: List of args tuples, one for each env.
+        """
+        assert len(args_list) == self.num_envs
+        results = []
+        for env, args in zip(self.envs, args_list):
+            results.append(getattr(env, method_name)(*args))
+        return results

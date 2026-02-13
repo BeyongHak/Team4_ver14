@@ -13,7 +13,7 @@ from scipy.stats import poisson
 from env.env_OWMR_continuous import ManufacturerOWMREnv
 from env.env_OWMR_discrete_action import ManufacturerOWMRDiscreteActionEnv
 # from env.retailer import Retailer <--- Removed
-from env.vector_env import SubprocVecEnv
+from env.vector_env import SubprocVecEnv, DummyVecEnv
 from env.truncNormal import HybridTruncNorm
 
 # Trainer
@@ -150,7 +150,9 @@ def main(args):
         eval_config["max_eps_length"] = args.eval_steps
         
         eval_env_fns = [make_env(eval_config, seed=10000+i, is_discrete=is_discrete) for i in range(num_eval_envs)]
-        return SubprocVecEnv(eval_env_fns)
+        # [Fix] Use DummyVecEnv (Sequential) for Evaluation to avoid MP overhead/deadlocks
+        print(f" [Evaluator] Using DummyVecEnv (Sequential) for {num_eval_envs} envs.")
+        return DummyVecEnv(eval_env_fns)
 
     entropy_end_step = config.get("entropy_coef", {}).get("step", 100000)
 
