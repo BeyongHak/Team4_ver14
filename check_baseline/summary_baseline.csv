@@ -1,0 +1,15 @@
+Config,Status,Violations,Total_Checks,Max_Violation
+Hetero_2R_0,Pass,0,90,0.0
+Hetero_2R_2,Pass,0,168,0.0
+Hetero_2R_4,Pass,0,81,0.0
+Hetero_5R_0,Pass,0,196560,0.0
+Hetero_5R_4,Pass,0,211680,0.0
+Homo_1R_0,Pass,0,8,0.0
+Homo_1R_2,Pass,0,11,0.0
+Homo_1R_4,Pass,0,8,0.0
+Homo_2R_0,Pass,0,81,0.0
+Homo_2R_2,Pass,0,169,0.0
+Homo_2R_4,Pass,0,100,0.0
+Homo_5R_0,Pass,0,248832,0.0
+Homo_5R_2,Pass,0,759375,0.0
+Homo_5R_4,Pass,0,248832,0.0

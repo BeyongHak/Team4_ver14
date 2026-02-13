@@ -1,0 +1,11 @@
+﻿Config,LeadTime,NumRetailers,Heterogeneity,Avg_Cost_Per_Step,CI_95_Lower,CI_95_Upper
+Hetero_2R_0,0,2,Hetero,34.40,34.28,34.51
+Hetero_2R_4,4,2,Hetero,42.38,42.27,42.49
+Hetero_5R_0,0,5,Hetero,40.31,40.21,40.41
+Hetero_5R_4,4,5,Hetero,45.28,45.17,45.39
+Homo_1R_0,0,1,Homo,33.45,33.31,33.60
+Homo_1R_4,4,1,Homo,44.44,44.33,44.54
+Homo_2R_0,0,2,Homo,34.27,34.15,34.39
+Homo_2R_4,4,2,Homo,41.57,41.46,41.68
+Homo_5R_0,0,5,Homo,41.63,41.52,41.74
+Homo_5R_4,4,5,Homo,45.56,45.46,45.65
