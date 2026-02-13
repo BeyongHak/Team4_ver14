@@ -125,12 +125,8 @@ def main(args):
     env_fns = [make_env(config, args.seed + i, is_discrete) for i in range(args.num_envs)]
     
     # Start Parallel Environments
-    # Start Parallel Environments
-    # [Fix] Switch to DummyVecEnv (Sequential) for Training to prevent Cloud Deadlocks (SubprocVecEnv)
-    # The user reported hangs during initialization. Sequential is safer.
-    print(f" initializing {args.num_envs} environments (Sequential/Dummy)...")
-    vec_env = DummyVecEnv(env_fns)
-    # vec_env = SubprocVecEnv(env_fns) # Original
+    print(f" initializing {args.num_envs} environments in parallel...")
+    vec_env = SubprocVecEnv(env_fns)
     print(" Vector Environment initialized successfully.")
 
     # 5. Initialize Trainer
@@ -154,9 +150,7 @@ def main(args):
         eval_config["max_eps_length"] = args.eval_steps
         
         eval_env_fns = [make_env(eval_config, seed=10000+i, is_discrete=is_discrete) for i in range(num_eval_envs)]
-        # [Fix] Use DummyVecEnv (Sequential) for Evaluation to avoid MP overhead/deadlocks
-        print(f" [Evaluator] Using DummyVecEnv (Sequential) for {num_eval_envs} envs.")
-        return DummyVecEnv(eval_env_fns)
+        return SubprocVecEnv(eval_env_fns)
 
     entropy_end_step = config.get("entropy_coef", {}).get("step", 100000)
 
