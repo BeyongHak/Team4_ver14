@@ -125,8 +125,12 @@ def main(args):
     env_fns = [make_env(config, args.seed + i, is_discrete) for i in range(args.num_envs)]
     
     # Start Parallel Environments
-    print(f" initializing {args.num_envs} environments in parallel...")
-    vec_env = SubprocVecEnv(env_fns)
+    # Start Parallel Environments
+    # [Fix] Switch to DummyVecEnv (Sequential) for Training to prevent Cloud Deadlocks (SubprocVecEnv)
+    # The user reported hangs during initialization. Sequential is safer.
+    print(f" initializing {args.num_envs} environments (Sequential/Dummy)...")
+    vec_env = DummyVecEnv(env_fns)
+    # vec_env = SubprocVecEnv(env_fns) # Original
     print(" Vector Environment initialized successfully.")
 
     # 5. Initialize Trainer
